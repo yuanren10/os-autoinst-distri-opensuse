@@ -128,7 +128,7 @@ sub is_caasp {
     elsif ($filter eq 'VMX') {
         return get_var('FLAVOR') !~ /DVD/;    # If not DVD it's VMX
     }
-    elsif ($filter =~ /^\d\.\d\+?$/) {
+    elsif ($filter =~ /\d\.\d\+?$/) {
         # If we use '+' it means "this or newer", which includes tumbleweed
         return ($filter =~ /\+$/) if check_var('VERSION', 'Tumbleweed');
         return check_version($filter, qr/\d\.\d/);
@@ -249,6 +249,10 @@ sub sle_version_at_least {
     if ($version eq '15') {
         return sle_version_at_least('12-SP4', version_variable => $version_variable)
           && !check_var($version_variable, '12-SP4');
+    }
+    if ($version eq '15-SP1') {
+        return sle_version_at_least('15', version_variable => $version_variable)
+          && !check_var($version_variable, '15');
     }
     die "unsupported SLE $version_variable $version in check";
 }

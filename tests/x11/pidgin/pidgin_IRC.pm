@@ -1,7 +1,7 @@
 # SUSE's openQA tests
 #
 # Copyright © 2009-2013 Bernhard M. Wiedemann
-# Copyright © 2012-2017 SUSE LLC
+# Copyright © 2012-2018 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -41,7 +41,8 @@ sub run {
     wait_screen_change { send_key "alt-c" };
 
     # Warning of spoofing ip may appear
-    if (check_screen("pidgin-spoofing-ip")) {
+    assert_screen([qw(pidgin-spoofing-ip pidgin-irc-sledtesting)]);
+    if (match_has_tag('pidgin-spoofing-ip')) {
         wait_screen_change {
             send_key "alt-tab";
         };

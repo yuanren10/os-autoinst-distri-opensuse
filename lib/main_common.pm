@@ -101,7 +101,8 @@ our @EXPORT = qw(
   load_security_tests_web
   load_security_tests_misc
   load_security_tests_crypt
-  load_security_tests_apparmor_status
+  load_security_tests_apparmor
+  load_security_tests_openscap
   load_systemd_patches_tests
   load_create_hdd_tests
   load_virtualization_tests
@@ -112,6 +113,7 @@ our @EXPORT = qw(
   load_common_opensuse_sle_tests
   replace_opensuse_repos_tests
   load_ssh_key_import_tests
+  load_jeos_tests
 );
 
 sub init_main {
@@ -519,6 +521,21 @@ sub load_system_role_tests {
     loadtest "installation/system_role" if is_caasp('kubic');
 }
 
+sub load_jeos_tests {
+    load_boot_tests();
+    loadtest "jeos/firstrun";
+    loadtest "jeos/record_machine_id";
+    loadtest "console/force_scheduled_tasks";
+    loadtest "jeos/grub2_gfxmode";
+    loadtest 'jeos/revive_xen_domain' if check_var('VIRSH_VMM_FAMILY', 'xen');
+    loadtest "jeos/diskusage";
+    loadtest "jeos/root_fs_size";
+    loadtest "jeos/mount_by_label";
+    if (is_sle) {
+        loadtest "console/suseconnect_scc";
+    }
+}
+
 sub installzdupstep_is_applicable {
     return !get_var("NOINSTALL") && !get_var("RESCUECD") && get_var("ZDUP");
 }
@@ -803,57 +820,60 @@ sub load_inst_tests {
         if (is_sles4sap() and sle_version_at_least('15') and check_var('SYSTEM_ROLE', 'default')) {
             loadtest "installation/sles4sap_product_installation_mode";
         }
-        loadtest "installation/partitioning";
-        if (defined(get_var("RAIDLEVEL"))) {
-            loadtest "installation/partitioning_raid";
-        }
-        elsif (check_var('LVM', 0) && get_var('ENCRYPT')) {
-            loadtest 'installation/partitioning_crypt_no_lvm';
-        }
-        elsif (get_var("LVM")) {
-            loadtest "installation/partitioning_lvm";
-        }
-        elsif (get_var('FULL_LVM_ENCRYPT')) {
-            loadtest 'installation/partitioning_full_lvm';
-        }
-        if (get_var("FILESYSTEM")) {
-            if (get_var('PARTITIONING_WARNINGS')) {
-                loadtest 'installation/partitioning_warnings';
+        # Kubic doesn't have a partitioning step
+        if (!is_caasp('kubic')) {
+            loadtest "installation/partitioning";
+            if (defined(get_var("RAIDLEVEL"))) {
+                loadtest "installation/partitioning_raid";
             }
-            loadtest "installation/partitioning_filesystem";
-        }
-        # boo#1093372 Leap 15.0 proposes a separate home even on small disks
-        # making the root partition likely to small so we should switch the
-        # defaults here unless we reconfigure using the guided proposal or
-        # expert partitioner anyway
-        if (get_var("TOGGLEHOME")
-            || (is_leap('15.0+') && get_var('HDDSIZEGB', 0) <= 20 && !defined get_var('RAIDLEVEL') && !get_var('LVM') && !get_var('FILESYSTEM')))
-        {
-            loadtest "installation/partitioning_togglehome";
-            if (get_var('LVM') && get_var('RESIZE_ROOT_VOLUME')) {
-                loadtest "installation/partitioning_resize_root";
+            elsif (check_var('LVM', 0) && get_var('ENCRYPT')) {
+                loadtest 'installation/partitioning_crypt_no_lvm';
             }
-        }
-        if (get_var("EXPERTPARTITIONER")) {
-            loadtest "installation/partitioning_expert";
-        }
-        if (get_var("ENLARGESWAP") && get_var("QEMURAM", 1024) > 4098) {
-            loadtest "installation/installation_enlargeswap";
-        }
+            elsif (get_var("LVM")) {
+                loadtest "installation/partitioning_lvm";
+            }
+            elsif (get_var('FULL_LVM_ENCRYPT')) {
+                loadtest 'installation/partitioning_full_lvm';
+            }
+            if (get_var("FILESYSTEM")) {
+                if (get_var('PARTITIONING_WARNINGS')) {
+                    loadtest 'installation/partitioning_warnings';
+                }
+                loadtest "installation/partitioning_filesystem";
+            }
+            # boo#1093372 Leap 15.0 proposes a separate home even on small disks
+            # making the root partition likely to small so we should switch the
+            # defaults here unless we reconfigure using the guided proposal or
+            # expert partitioner anyway
+            if (get_var("TOGGLEHOME")
+                || (is_leap('15.0+') && get_var('HDDSIZEGB', 0) <= 20 && !defined get_var('RAIDLEVEL') && !get_var('LVM') && !get_var('FILESYSTEM')))
+            {
+                loadtest "installation/partitioning_togglehome";
+                if (get_var('LVM') && get_var('RESIZE_ROOT_VOLUME')) {
+                    loadtest "installation/partitioning_resize_root";
+                }
+            }
+            if (get_var("EXPERTPARTITIONER")) {
+                loadtest "installation/partitioning_expert";
+            }
+            if (get_var("ENLARGESWAP") && get_var("QEMURAM", 1024) > 4098) {
+                loadtest "installation/installation_enlargeswap";
+            }
 
-        if (get_var("SPLITUSR")) {
-            loadtest "installation/partitioning_splitusr";
+            if (get_var("SPLITUSR")) {
+                loadtest "installation/partitioning_splitusr";
+            }
+            if (get_var("DELETEWINDOWS")) {
+                loadtest "installation/partitioning_guided";
+            }
+            if (get_var("IBFT")) {
+                loadtest "installation/partitioning_iscsi";
+            }
+            if ((uses_qa_net_hardware() && !get_var('FILESYSTEM')) || get_var('SELECT_FIRST_DISK') || get_var("ISO_IN_EXTERNAL_DRIVE")) {
+                loadtest "installation/partitioning_firstdisk";
+            }
+            loadtest "installation/partitioning_finish";
         }
-        if (get_var("DELETEWINDOWS")) {
-            loadtest "installation/partitioning_guided";
-        }
-        if (get_var("IBFT")) {
-            loadtest "installation/partitioning_iscsi";
-        }
-        if ((uses_qa_net_hardware() && !get_var('FILESYSTEM')) || get_var('SELECT_FIRST_DISK') || get_var("ISO_IN_EXTERNAL_DRIVE")) {
-            loadtest "installation/partitioning_firstdisk";
-        }
-        loadtest "installation/partitioning_finish";
     }
     if (is_opensuse && addon_products_is_applicable() && !is_leap('42.3+')) {
         loadtest "installation/addon_products";
@@ -952,6 +972,38 @@ sub load_inst_tests {
     }
 }
 
+sub load_console_server_tests {
+    if (check_var('BACKEND', 'qemu') && !is_jeos) {
+        # The NFS test expects the IP to be 10.0.2.15
+        loadtest "console/yast2_nfs_server";
+    }
+    loadtest "console/http_srv";
+    loadtest "console/dns_srv";
+    loadtest "console/postgresql_server" unless (is_leap('<15.0'));
+    # TODO test on openSUSE https://progress.opensuse.org/issues/31972
+    if (is_sle && sle_version_at_least('12-SP1')) {    # shibboleth-sp not available on SLES 12 GA
+        loadtest "console/shibboleth";
+    }
+    if (!is_staging && (is_opensuse || get_var('ADDONS', '') =~ /wsm/ || get_var('SCC_ADDONS', '') =~ /wsm/)) {
+        # TODO test on openSUSE https://progress.opensuse.org/issues/31972
+        loadtest "console/pcre" if is_sle;
+        # TODO test on SLE https://progress.opensuse.org/issues/31972
+        loadtest "console/mysql_odbc" if is_opensuse;
+        if (is_leap('<15.0') || is_sle('<15')) {
+            loadtest "console/php5";
+            loadtest "console/php5_mysql";
+            loadtest "console/php5_postgresql96";
+        }
+        loadtest "console/php7";
+        loadtest "console/php7_mysql";
+        loadtest "console/php7_postgresql96";
+    }
+    # TODO test on openSUSE https://progress.opensuse.org/issues/31972
+    loadtest "console/apache_ssl" if is_sle;
+    # TODO test on openSUSE https://progress.opensuse.org/issues/31972
+    loadtest "console/apache_nss" if is_sle;
+}
+
 sub load_consoletests {
     return unless consolestep_is_applicable();
     if (get_var("ADDONS", "") =~ /rt/) {
@@ -961,7 +1013,7 @@ sub load_consoletests {
     loadtest 'console/integration_services' if is_hyperv;
     loadtest "locale/keymap_or_locale";
     loadtest "console/repo_orphaned_packages_check" if is_jeos;
-    loadtest "console/force_cron_run" unless is_jeos;
+    loadtest "console/force_scheduled_tasks" unless is_jeos;
     if (get_var("LOCK_PACKAGE")) {
         loadtest "console/check_locked_package";
     }
@@ -975,7 +1027,8 @@ sub load_consoletests {
     # We also don't have any repos on staging and update/upgrade tests.
     # This test uses serial console too much to be reliable on Hyper-V (poo#30613)
     # Test doesn't make sense on live images too, don't have source repo there.
-    if (!is_staging() && !is_updates_tests() && !is_upgrade() && !is_jeos() && !is_hyperv() && !is_livesystem()) {
+    # Skip this test for SLED (poo#36397)
+    if (!is_staging() && !is_updates_tests() && !is_upgrade() && !is_jeos() && !is_hyperv() && !is_livesystem() && !is_desktop()) {
         loadtest "console/zypper_info";
     }
     # Add non-oss and debug repos for o3 and remove other by default
@@ -1077,36 +1130,9 @@ sub load_consoletests {
     }
     loadtest "console/mtab";
     if (!get_var("NOINSTALL") && !get_var("LIVETEST") && (check_var("DESKTOP", "textmode"))) {
-        if (check_var('BACKEND', 'qemu') && !is_jeos) {
-            # The NFS test expects the IP to be 10.0.2.15
-            loadtest "console/yast2_nfs_server";
-        }
-        loadtest "console/http_srv";
+        # disable these tests of server packages for SLED (poo#36436)
+        load_console_server_tests() unless is_desktop;
         loadtest "console/mysql_srv";
-        loadtest "console/dns_srv";
-        loadtest "console/postgresql_server" unless (is_leap('<15.0'));
-        # TODO test on openSUSE https://progress.opensuse.org/issues/31972
-        if (is_sle && sle_version_at_least('12-SP1')) {    # shibboleth-sp not available on SLES 12 GA
-            loadtest "console/shibboleth";
-        }
-        if (!is_staging && (is_opensuse || get_var('ADDONS', '') =~ /wsm/ || get_var('SCC_ADDONS', '') =~ /wsm/)) {
-            # TODO test on openSUSE https://progress.opensuse.org/issues/31972
-            loadtest "console/pcre" if is_sle;
-            # TODO test on SLE https://progress.opensuse.org/issues/31972
-            loadtest "console/mysql_odbc" if is_opensuse;
-            if (is_leap('<15.0') || is_sle('<15')) {
-                loadtest "console/php5";
-                loadtest "console/php5_mysql";
-                loadtest "console/php5_postgresql96";
-            }
-            loadtest "console/php7";
-            loadtest "console/php7_mysql";
-            loadtest "console/php7_postgresql96";
-        }
-        # TODO test on openSUSE https://progress.opensuse.org/issues/31972
-        loadtest "console/apache_ssl" if is_sle;
-        # TODO test on openSUSE https://progress.opensuse.org/issues/31972
-        loadtest "console/apache_nss" if is_sle;
     }
     if (check_var("DESKTOP", "xfce")) {
         loadtest "console/xfce_gnome_deps";
@@ -1476,7 +1502,8 @@ sub load_extra_tests {
 sub load_rollback_tests {
     return if check_var('ARCH', 's390x');
     loadtest "boot/grub_test_snapshot";
-    loadtest "migration/version_switch_origin_system";
+    # Skip load version switch for online migration
+    loadtest "migration/version_switch_origin_system" if (!get_var("ONLINE_MIGRATION"));
     if (get_var('UPGRADE') || get_var('ZDUP')) {
         loadtest "boot/snapper_rollback";
     }
@@ -1523,7 +1550,8 @@ sub load_wicked_tests {
         loadtest 'wicked/config_files';
     }
     elsif (check_var('WICKED', 'advanced')) {
-        loadtest 'wicked/advanced';
+        loadtest 'wicked/advanced_ref' if check_var('IS_WICKED_REF', '1');
+        loadtest 'wicked/advanced_sut' if check_var('IS_WICKED_REF', '0');
     }
     else {
         die 'Unhandled WICKED test selection: ' . get_var('WICKED');
@@ -1538,17 +1566,11 @@ sub load_networkd_tests {
 }
 
 sub load_nfv_master_tests {
-    load_boot_tests();
-    load_inst_tests();
-    load_reboot_tests();
     loadtest "nfv/prepare_env";
     loadtest "nfv/run_integration_tests";
 }
 
 sub load_nfv_trafficgen_tests {
-    load_boot_tests();
-    load_inst_tests();
-    load_reboot_tests();
     loadtest "nfv/trex_installation";
 }
 
@@ -1566,8 +1588,8 @@ sub load_x11_installation {
     loadtest "x11/x11_setup";
     # temporary adding test modules which applies hacks for missing parts in sle15
     loadtest "console/sle15_workarounds" if is_sle and sle_version_at_least('15');
-    loadtest "console/hostname"       unless is_bridged_networking;
-    loadtest "console/force_cron_run" unless is_jeos;
+    loadtest "console/hostname"              unless is_bridged_networking;
+    loadtest "console/force_scheduled_tasks" unless is_jeos;
     loadtest "shutdown/grub_set_bootargs";
     loadtest "shutdown/shutdown";
 }
@@ -1664,14 +1686,17 @@ sub load_common_x11 {
     }
     elsif (check_var("REGRESSION", "gnome")) {
         loadtest "boot/boot_to_desktop";
+        loadtest "x11/window_system";
         load_x11_gnome();
     }
     elsif (check_var("REGRESSION", "documentation")) {
         loadtest "boot/boot_to_desktop";
+        loadtest "x11/window_system";
         load_x11_documentation();
     }
     elsif (check_var("REGRESSION", "other")) {
         loadtest "boot/boot_to_desktop";
+        loadtest "x11/window_system";
         load_x11_other();
     }
 }
@@ -1743,10 +1768,21 @@ sub load_security_tests_crypt {
 }
 
 # Other security tests other than FIPS
-sub load_security_tests_apparmor_status {
+sub load_security_tests_apparmor {
     loadtest "security/apparmor/aa_status";
     loadtest "security/apparmor/aa_enforce";
     loadtest "security/apparmor/aa_complain";
+    loadtest "security/apparmor/aa_genprof";
+    loadtest "security/apparmor/aa_autodep";
+    loadtest "security/apparmor/aa_logprof";
+    loadtest "security/apparmor/aa_easyprof";
+    loadtest "security/apparmor/aa_notify";
+}
+
+sub load_security_tests_openscap {
+    loadtest "security/openscap/oscap_info";
+    loadtest "security/openscap/oscap_oval_scanning";
+    loadtest "security/openscap/oscap_xccdf_scanning";
 }
 
 sub load_systemd_patches_tests {
@@ -1761,8 +1797,8 @@ sub load_create_hdd_tests {
     # temporary adding test modules which applies hacks for missing parts in sle15
     loadtest 'console/sle15_workarounds' if is_sle('15+');
     loadtest 'console/integration_services' if is_hyperv;
-    loadtest 'console/hostname'       unless is_bridged_networking;
-    loadtest 'console/force_cron_run' unless is_jeos;
+    loadtest 'console/hostname'              unless is_bridged_networking;
+    loadtest 'console/force_scheduled_tasks' unless is_jeos;
     # Remove repos pointing to download.opensuse.org and add snaphot repo from o3
     replace_opensuse_repos_tests if is_repo_replacement_required;
     loadtest 'console/scc_deregistration' if get_var('SCC_DEREGISTER');
@@ -1813,7 +1849,7 @@ sub load_syscontainer_tests() {
 }
 
 sub load_toolchain_tests {
-    loadtest "console/force_cron_run";
+    loadtest "console/force_scheduled_tasks";
     loadtest "toolchain/install";
     loadtest "toolchain/gcc_fortran_compilation";
     loadtest "toolchain/gcc_compilation";

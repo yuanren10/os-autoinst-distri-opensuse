@@ -63,6 +63,7 @@ our @EXPORT = qw(
   handle_logout
   handle_relogin
   handle_emergency
+  handle_grub_zvm
   service_action
   assert_gui_app
   install_all_from_repo
@@ -121,7 +122,7 @@ sub type_line_svirt {
 
 sub unlock_zvm_disk {
     my ($console) = @_;
-    eval { console('x3270')->expect_3270(output_delim => 'Please enter passphrase') };
+    eval { console('x3270')->expect_3270(output_delim => 'Please enter passphrase', timeout => 30) };
     if ($@) {
         diag 'No passphrase asked, continuing';
     }
@@ -134,7 +135,7 @@ sub unlock_zvm_disk {
 
 sub handle_grub_zvm {
     my ($console) = @_;
-    eval { $console->expect_3270(output_delim => 'GNU GRUB'); };
+    eval { $console->expect_3270(output_delim => 'GNU GRUB', timeout => 60); };
     if ($@) {
         diag 'Could not find GRUB screen, continuing nevertheless, trying to boot';
     }
@@ -181,7 +182,8 @@ sub unlock_if_encrypted {
             wait_serial("Please enter passphrase for disk.*", 100);
             type_line_svirt "$password";
         }
-        wait_serial("Please enter passphrase for disk.*", 100);
+        wait_serial('GNU GRUB') || diag 'Could not find GRUB screen, continuing nevertheless, trying to boot';
+        type_line_svirt '', expect => "Please enter passphrase for disk.*", timeout => 100, fail_message => 'Could not find "enter passphrase" prompt';
         type_line_svirt "$password";
     }    # Handle zVM scenario
     elsif (check_var('BACKEND', 's390x')) {
@@ -446,7 +448,7 @@ sub ensure_unlocked_desktop {
                 # open run command prompt (if screen isn't locked)
                 mouse_hide(1);
                 send_key 'alt-f2';
-                if (check_screen 'desktop-runner') {
+                if (check_screen 'desktop-runner', 30) {
                     send_key 'esc';
                     assert_screen 'generic-desktop';
                 }
@@ -869,7 +871,7 @@ sub addon_license {
         do {
             assert_screen \@tags;
             if (match_has_tag('import-untrusted-gpg-key')) {
-                record_soft_failure 'untrusted gpg key';
+                record_info 'untrusted gpg key', "Trusting untrusted GPG key", result => 'softfail';
                 wait_screen_change { send_key 'alt-t' };
             }
             elsif (match_has_tag("addon-betawarning-$addon")) {
@@ -920,7 +922,7 @@ sub handle_login {
     $myuser //= $username;
     $user_selected //= 0;
 
-    assert_screen 'displaymanager';    # wait for DM, then try to login
+    assert_screen 'displaymanager', 90;    # wait for DM, then try to login
     wait_still_screen;
     if (get_var('ROOTONLY')) {
         if (check_screen 'displaymanager-username-notlisted', 10) {
@@ -1105,16 +1107,16 @@ sub get_x11_console_tty {
 }
 
 =head2 setup_static_network
-Configure static IP on SUT with setting up DNS and default GW.
+Configure static IP on SUT with setting up default GW.
 Also doing test ping to 10.0.2.2 to check that network is alive
 =cut
 sub setup_static_network {
     my ($self, $ip) = @_;
-    configure_default_gateway();
-    configure_static_ip($ip);
-    configure_static_dns(get_host_resolv_conf());
-
-    # check if gateway is reachable
+    assert_script_run("echo 'default 10.0.2.2 - -' > /etc/sysconfig/network/routes");
+    my $iface = script_output('ls /sys/class/net/ | grep -v lo | head -1');
+    assert_script_run qq(echo -e "\\nSTARTMODE='auto'\\nBOOTPROTO='static'\\nIPADDR='$ip'">/etc/sysconfig/network/ifcfg-$iface);
+    assert_script_run "rcnetwork restart";
+    assert_script_run "ip addr";
     assert_script_run "ping -c 1 10.0.2.2 || journalctl -b --no-pager > /dev/$serialdev";
 }
 
@@ -1249,8 +1251,8 @@ sub reconnect_s390 {
     # different behaviour for z/VM and z/KVM
     if (check_var('BACKEND', 's390x')) {
         my $console = console('x3270');
-        # grub is handled in unlock_if_encrypted
-        handle_grub_zvm($console) unless get_var('ENCRYPT');
+        # grub is handled in unlock_if_encrypted unless affected by bsc#993247 or https://fate.suse.com/321208
+        handle_grub_zvm($console) if (!get_var('ENCRYPT') || get_var('ENCRYPT_ACTIVATE_EXISTING') && !get_var('ENCRYPT_FORCE_RECOMPUTE'));
         my $r;
         eval { $r = console('x3270')->expect_3270(output_delim => $login_ready, timeout => $args{timeout}); };
         if ($@) {
@@ -1263,12 +1265,15 @@ sub reconnect_s390 {
         select_console('iucvconn');
     }
     else {
-        my $r = wait_serial($login_ready, 300);
-        if ($r && $r =~ qr/Welcome to SUSE Linux Enterprise 15/) {
-            record_soft_failure('bsc#1040606');
+        # In case of encrypted partition, the GRUB screen check is implemented in 'unlock_if_encrypted' module
+        if (get_var('ENCRYPT')) {
+            wait_serial($login_ready) || diag 'Could not find GRUB screen, continuing nevertheless, trying to boot';
         }
-        elsif ($r && is_sle) {
-            $r =~ qr/Welcome to SUSE Linux Enterprise Server/ || die "Correct welcome string not found";
+        else {
+            wait_serial('GNU GRUB') || diag 'Could not find GRUB screen, continuing nevertheless, trying to boot';
+            select_console('svirt');
+            save_svirt_pty;
+            type_line_svirt '', expect => $login_ready, timeout => $args{timeout}, fail_message => 'Could not find login prompt';
         }
     }
 
@@ -1279,5 +1284,3 @@ sub reconnect_s390 {
 }
 
 1;
-
-# vim: sw=4 et

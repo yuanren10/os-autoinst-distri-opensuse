@@ -2,7 +2,7 @@ package y2logsstep;
 use base "installbasetest";
 use testapi;
 use strict;
-use version_utils 'is_sle';
+use version_utils qw(is_sle is_caasp);
 use ipmi_backend_utils;
 
 sub use_wicked {
@@ -34,13 +34,6 @@ sub get_ip_address {
 }
 
 sub get_to_console {
-    if (check_var('BACKEND', 'ipmi')) {
-        use_ssh_serial_console;
-        get_ip_address;
-        save_screenshot();
-        return;
-    }
-
     my @tags = qw(yast-still-running linuxrc-install-fail linuxrc-repo-not-found);
     my $ret = check_screen(\@tags, 5);
     if ($ret && match_has_tag("linuxrc-repo-not-found")) {    # KVM only
@@ -137,7 +130,7 @@ sub deal_with_dependency_issues {
 
     return unless check_screen 'manual-intervention', 10;
 
-    record_soft_failure 'dependency warning';
+    record_info 'dependency warning', "Dependency warning, working around dependency issues", result => 'fail';
 
     if (check_var('VIDEOMODE', 'text')) {
         send_key 'alt-c';    # Change
@@ -199,7 +192,7 @@ sub deal_with_dependency_issues {
         my $interval = 10;
         my $timetick = 0;
 
-        while (check_screen('adapting_proposal', no_wait => 1)) {
+        while (check_screen('adapting_proposal', timeout => 30, no_wait => 1)) {
             sleep 10;
             $timetick += $interval;
             last if $timetick >= $timeout;
@@ -208,7 +201,7 @@ sub deal_with_dependency_issues {
     }
 
     # In text mode dependency issues may occur again after resolving them
-    if (check_screen 'manual-intervention') {
+    if (check_screen 'manual-intervention', 30) {
         $self->deal_with_dependency_issues;
     }
 }
@@ -258,10 +251,13 @@ sub post_fail_hook {
       environ
       smaps);
 
+    $self->SUPER::post_fail_hook;
     get_to_console;
-
+    $self->get_ip_address;
+    $self->remount_tmp_if_ro;
     # Avoid collectin logs twice when investigate_yast2_failure() is inteded to hard-fail
     $self->save_upload_y2logs unless get_var('ASSERT_Y2LOGS');
+    return if is_caasp;
 
     if (get_var('FILESYSTEM', 'btrfs') =~ /btrfs/) {
         assert_script_run 'btrfs filesystem df /mnt | tee /tmp/btrfs-filesystem-df-mnt.txt';

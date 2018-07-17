@@ -128,7 +128,13 @@ sub investigate_yast2_failure {
         $error_detected = 1;
     }
     # Array with possible strings to search in YaST2 logs
-    my @y2log_errors = ('Internal error. Please report a bug report', '<3>', 'No textdomain configured');
+    my @y2log_errors = (
+        'Internal error. Please report a bug report',    # Detecting errors
+        '<3>',                                           # Detecting problems using error code
+        'No textdomain configured',                      # Detecting missing translations
+        'nothing provides',                              # Detecting missing required packages
+        'but this requirement cannot be provided'        # and package conflicts
+    );
     for my $y2log_error (@y2log_errors) {
         if (my $y2log_error_result = script_output 'grep -B 3 \'' . $y2log_error . '\' /var/log/YaST2/y2log | tail -n 20 || true') {
             record_info 'YaST2 log error detected', "Details:\n\n$y2log_error_result", result => 'fail';
@@ -144,7 +150,7 @@ sub export_logs {
     my ($self) = shift;
     select_console 'log-console';
     save_screenshot;
-
+    $self->remount_tmp_if_ro;
     $self->problem_detection;
 
     $self->save_and_upload_log('cat /proc/loadavg', '/tmp/loadavg.txt', {screenshot => 1});
@@ -311,8 +317,9 @@ sub wait_boot {
     if (check_var('ARCH', 's390x')) {
         my $login_ready = qr/Welcome to SUSE Linux Enterprise Server.*\(s390x\)/;
         if (check_var('BACKEND', 's390x')) {
-
-            console('x3270')->expect_3270(
+            my $console = console('x3270');
+            handle_grub_zvm($console);
+            $console->expect_3270(
                 output_delim => $login_ready,
                 timeout      => $ready_time + 100
             );
@@ -492,6 +499,18 @@ sub firewall {
     return ($old_product_versions || $upgrade_from_susefirewall) ? 'SuSEfirewall2' : 'firewalld';
 }
 
+=head2 remount_tmp_if_ro
+
+    remount_tmp_if_ro()
+
+Mounts /tmp to shared memory if not possible to write to tmp.
+For example, save_y2logs creates temporary files there.
+
+=cut
+sub remount_tmp_if_ro {
+    script_run 'touch /tmp/test_ro || mount -t tmpfs /dev/shm /tmp';
+}
+
 # useful post_fail_hook for any module that calls wait_boot
 #
 # we could use the same approach in all cases of boot/reboot/shutdown in case
@@ -503,6 +522,7 @@ sub post_fail_hook {
     # 'esc' just in case the plymouth splash screen is shown and we can not
     # see any interesting console logs.
     send_key 'esc';
+    save_screenshot;
 }
 
 1;

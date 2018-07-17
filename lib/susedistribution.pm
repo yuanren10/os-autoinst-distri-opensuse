@@ -5,6 +5,7 @@ use strict;
 use utils
   qw(type_string_slow ensure_unlocked_desktop save_svirt_pty get_root_console_tty get_x11_console_tty ensure_serialdev_permissions pkcon_quit zypper_call);
 use version_utils qw(is_hyperv_in_gui is_sle is_leap);
+use ipmi_backend_utils 'use_ssh_serial_console';
 
 # Base class implementation of distribution class necessary for testapi
 
@@ -192,7 +193,7 @@ sub x11_start_program {
     init_desktop_runner($program, $timeout);
     # With match_typed we check typed text and if doesn't match - retrying
     # Is required by firefox test on kde, as typing fails on KDE desktop runnner sometimes
-    if ($args{match_typed} && !check_screen($args{match_typed})) {
+    if ($args{match_typed} && !check_screen($args{match_typed}, 30)) {
         send_key 'esc';
         init_desktop_runner($program, $timeout);
     }
@@ -216,6 +217,14 @@ sub x11_start_program {
     die "Did not find target needle for tag(s) '@target'" if (match_has_tag 'desktop-runner-border' || match_has_tag 'desktop-runner-plasma-suggestions');
 }
 
+sub _ensure_installed_zypper_fallback {
+    my ($self, $pkglist) = @_;
+    $self->become_root;
+    pkcon_quit;
+    zypper_call "in $pkglist";
+    type_string "exit\n";
+}
+
 sub ensure_installed {
     my ($self, $pkgs, %args) = @_;
     my $pkglist = ref $pkgs eq 'ARRAY' ? join ' ', @$pkgs : $pkgs;
@@ -230,11 +239,7 @@ sub ensure_installed {
     # make sure packagekit service is available
     testapi::assert_script_run('systemctl is-active -q packagekit || (systemctl unmask -q packagekit ; systemctl start -q packagekit)');
     type_string "exit\n";
-    my $retries = 5;    # arbitrary
-    $self->script_run(
-"for i in {1..$retries} ; do pkcon install -yp $pkglist && break ; done ; RET=\$?; echo \"\n  pkcon finished\n\"; echo \"pkcon-\${RET}-\" > /dev/$testapi::serialdev",
-        0
-    );
+    $self->script_run("pkcon install -yp $pkglist; echo pkcon-status-\$? | tee /dev/$testapi::serialdev", 0);
     my @tags = qw(Policykit Policykit-behind-window pkcon-finished);
     while (1) {
         last unless @tags;
@@ -253,15 +258,17 @@ sub ensure_installed {
             next;
         }
     }
-    my $ret = wait_serial('pkcon-\d+-');
-    if ($ret =~ /pkcon-4-/) {
-        $self->become_root;
-        pkcon_quit;
-        zypper_call "in $pkglist";
-        type_string "exit\n";
+    my $ret = wait_serial('pkcon-status-\d+');
+    if ($ret =~ /pkcon-status-4/) {
+        $self->_ensure_installed_zypper_fallback($pkglist);
         record_soft_failure "boo#1091353 - pkcon doesn't find existing pkg - falling back to zypper";
     }
-    elsif ($ret !~ /pkcon-0/) {
+    elsif ($ret =~ /pkcon-status-5/) {
+        record_info 'pkcon failed', 'Return value meaning: "Nothing useful was done", trying fallback to zypper"';
+        $self->_ensure_installed_zypper_fallback($pkglist);
+        record_soft_failure 'boo#1100134 - pkcon randomly fails to download packages';
+    }
+    elsif ($ret !~ /pkcon-status-0/) {
         die "pkcon install did not succeed, return code: $ret";
     }
     send_key("alt-f4");    # close xterm
@@ -310,7 +317,7 @@ sub become_root {
 
     $self->script_sudo('bash', 0);
     type_string "whoami > /dev/$testapi::serialdev\n";
-    wait_serial("root", 10) || die "Root prompt not there";
+    wait_serial('root') || die "Root prompt not there";
     type_string "cd /tmp\n";
     $self->set_standard_prompt('root');
     type_string "clear\n";
@@ -513,9 +520,14 @@ sub activate_console {
             # login as root, who does not have a password on Live-CDs
             wait_screen_change { type_string "root\n" };
         }
+        elsif (check_var('BACKEND', 'ipmi')) {
+            # Select configure serial and redirect to root-ssh instead
+            use_ssh_serial_console;
+            return;
+        }
         else {
             # on s390x we need to login here by providing a password
-            handle_password_prompt if (check_var('ARCH', 's390x') || check_var('BACKEND', 'ipmi'));
+            handle_password_prompt if check_var('ARCH', 's390x');
             assert_screen "inst-console";
         }
     }
@@ -534,8 +546,9 @@ sub activate_console {
     diag "activate_console, console: $console, type: $type";
     if ($type eq 'console') {
         # different handling for ssh consoles on s390x zVM
-        if (check_var('BACKEND', 's390x') || get_var('S390_ZKVM')) {
-            diag "backend s390x || zkvm";
+        if (check_var('BACKEND', 's390x') || get_var('S390_ZKVM') || check_var('BACKEND', 'ipmi')) {
+            diag 'backend s390x || zkvm || ipmi';
+            $user ||= 'root';
             handle_password_prompt;
             ensure_user($user);
         }

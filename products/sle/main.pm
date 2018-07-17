@@ -352,20 +352,22 @@ if (is_updates_test_repo && !get_var('MAINT_TEST_REPO')) {
 if (get_var('ENABLE_ALL_SCC_MODULES') && !get_var('SCC_ADDONS')) {
     if (sle_version_at_least('15')) {
         # Add only modules which are not pre-selected
-        my $addons = 'legacy,sdk,pcm,wsm,phub';
+        # 'pcm' should be treated special as it is only applicable to cloud
+        # installations
+        my $addons = 'legacy,sdk,wsm,phub';
         # Container module is missing for aarch64. Not a bug. fate#323788
         $addons .= ',contm' unless (check_var('ARCH', 'aarch64'));
         set_var('SCC_ADDONS', $addons);
-        set_var('PATTERNS', 'default,asmm,pcm') if !get_var('PATTERNS');
+        set_var('PATTERNS', 'default,asmm') if !get_var('PATTERNS');
     }
     else {
         if (check_var('ARCH', 'aarch64')) {
-            set_var('SCC_ADDONS', 'pcm,tcm');
-            set_var('PATTERNS', 'default,pcm') if !get_var('PATTERNS');
+            set_var('SCC_ADDONS', 'tcm');
+            set_var('PATTERNS', 'default') if !get_var('PATTERNS');
         }
         else {
-            set_var('SCC_ADDONS', 'phub,asmm,contm,lgm,pcm,tcm,wsm');
-            set_var('PATTERNS', 'default,asmm,pcm') if !get_var('PATTERNS');
+            set_var('SCC_ADDONS', 'phub,asmm,contm,lgm,tcm,wsm');
+            set_var('PATTERNS', 'default,asmm') if !get_var('PATTERNS');
         }
     }
 }
@@ -378,6 +380,12 @@ if (get_var('SUPPORT_SERVER_ROLES', '') =~ /aytest/ && !get_var('AYTESTS_REPO'))
     else {
         set_var('AYTESTS_REPO', 'http://download.suse.de/ibs/Devel:/YaST:/SLE-12-SP3/SLE_12_SP3/');
     }
+}
+
+# Workaround to be able to use create_hdd_hpc_textmode simultaneously  in SLE15 and SLE12 SP*
+if (check_var('SLE_PRODUCT', 'hpc') && check_var('INSTALLONLY', '1') && is_sle('<15')) {
+    set_var('SCC_ADDONS',   'hpcm,wsm');
+    set_var('SCC_REGISTER', 'installation');
 }
 
 $needle::cleanuphandler = \&cleanup_needles;
@@ -428,7 +436,7 @@ sub load_x11_webbrowser_extra {
 
 sub load_x11_message {
     if (check_var("DESKTOP", "gnome")) {
-        loadtest "x11/empathy/empathy_irc";
+        loadtest "x11/empathy/empathy_irc" if is_sle("<15");
         loadtest "x11/evolution/evolution_smoke";
         loadtest "x11/evolution/evolution_prepare_servers";
         loadtest "x11/evolution/evolution_mail_imap";
@@ -503,11 +511,24 @@ sub load_slenkins_tests {
 }
 
 sub load_ha_cluster_tests {
-    return unless (get_var('HA_CLUSTER'));
+    return unless get_var('HA_CLUSTER');
 
-    # Standard boot and configuration
+    # Standard boot
     boot_hdd_image;
+
+    # Only SLE-15+ has support for lvmlockd
+    set_var('USE_LVMLOCKD', 0) if (get_var('USE_LVMLOCKD') and is_sle('<15'));
+
+    # Wait for barriers to be initialized
     loadtest 'ha/wait_barriers';
+
+    # Test HA after an upgrade, so no need to configure the HA stack
+    if (get_var('HDDVERSION')) {
+        loadtest 'ha/check_after_reboot';
+        return 1;
+    }
+
+    # Patch (if needed) and basic configuration
     loadtest 'qa_automation/patch_and_reboot' if is_updates_tests;
     loadtest 'console/consoletest_setup';
     loadtest 'console/hostname';
@@ -565,7 +586,7 @@ sub load_ha_cluster_tests {
     boot_hdd_image if !get_var('HA_CLUSTER_JOIN');
 
     # Show HA cluster status *after* fencing test
-    loadtest 'ha/check_after_fencing';
+    loadtest 'ha/check_after_reboot';
 
     # Check logs to find error and upload all needed logs if we are not
     # in installation/publishing mode
@@ -608,7 +629,7 @@ sub load_online_migration_tests {
     if (check_var("MIGRATION_METHOD", 'zypper')) {
         loadtest "migration/sle12_online_migration/zypper_migration";
     }
-    loadtest "migration/sle12_online_migration/orphaned_packages_check";
+    loadtest 'console/orphaned_packages_check';
     loadtest "migration/sle12_online_migration/post_migration";
 }
 
@@ -654,6 +675,44 @@ sub prepare_target {
     }
 }
 
+sub is_baremetal_test {
+    return (get_var('IBTESTS') || get_var('NFV'));
+}
+
+sub mellanox_config {
+    loadtest "kernel/mellanox_config";
+    load_reboot_tests();
+}
+
+sub load_baremetal_tests {
+    load_boot_tests();
+    load_inst_tests();
+    load_reboot_tests();
+
+    # load InfiniBand Tests. The barriers below must be created
+    # here to ensure they are a) only created once and b) early enough
+    # to be available when needed.
+    if (get_var('IBTESTS')) {
+        if (get_var('IBTEST_ROLE') eq 'IBTEST_MASTER') {
+            barrier_create('IBTEST_SETUP', 3);
+            barrier_create('IBTEST_BEGIN', 3);
+            barrier_create('IBTEST_DONE',  3);
+        }
+        mellanox_config();
+        loadtest "kernel/ib_tests";
+    }
+    elsif (get_var('NFV')) {
+        mellanox_config();
+        loadtest "kernel/mellanox_ofed" if get_var('OFED_URL');
+        if (check_var("NFV", "master")) {
+            load_nfv_master_tests();
+        }
+        elsif (check_var("NFV", "trafficgen")) {
+            load_nfv_trafficgen_tests();
+        }
+    }
+}
+
 sub load_default_tests {
     load_boot_tests();
     load_inst_tests();
@@ -674,38 +733,26 @@ require $distri;
 testapi::set_distribution(susedistribution->new());
 
 if (is_jeos) {
-    load_boot_tests();
-    loadtest "jeos/firstrun";
-    loadtest "console/force_cron_run";
-    loadtest "jeos/grub2_gfxmode";
-    loadtest 'jeos/revive_xen_domain' if check_var('VIRSH_VMM_FAMILY', 'xen');
-    loadtest "jeos/diskusage";
-    loadtest "jeos/root_fs_size";
-    loadtest "jeos/mount_by_label";
-    loadtest "console/suseconnect_scc";
+    load_jeos_tests();
 }
 
 # load the tests in the right order
 if (is_kernel_test()) {
     load_kernel_tests();
 }
+elsif (is_baremetal_test()) {
+    load_baremetal_tests;
+}
 elsif (get_var("WICKED")) {
     boot_hdd_image();
     load_wicked_tests();
-}
-elsif (get_var('NFV')) {
-    if (check_var("NFV", "master")) {
-        load_nfv_master_tests();
-    }
-    elsif (check_var("NFV", "trafficgen")) {
-        load_nfv_trafficgen_tests();
-    }
 }
 elsif (get_var("REGRESSION")) {
     load_common_x11;
     # Used by QAM testing
     if (check_var("REGRESSION", "firefox")) {
         loadtest "boot/boot_to_desktop";
+        loadtest "x11/window_system";
         load_x11_webbrowser_core();
         load_x11_webbrowser_extra();
     }
@@ -721,14 +768,17 @@ elsif (get_var("REGRESSION")) {
     }
     elsif (check_var("REGRESSION", "message")) {
         loadtest "boot/boot_to_desktop";
+        loadtest "x11/window_system";
         load_x11_message();
     }
     elsif (check_var('REGRESSION', 'remote')) {
         loadtest 'boot/boot_to_desktop';
+        loadtest "x11/window_system";
         load_x11_remote();
     }
     elsif (check_var("REGRESSION", "piglit")) {
         loadtest "boot/boot_to_desktop";
+        loadtest "x11/window_system";
         loadtest "x11/piglit/piglit";
     }
 }
@@ -803,8 +853,11 @@ elsif (get_var("FIPS_TS") || get_var("SECURITY")) {
         # Load client tests by APPTESTS variable
         load_applicationstests;
     }
-    elsif (check_var("SECURITY", "apparmor_status")) {
-        load_security_tests_apparmor_status;
+    elsif (check_var("SECURITY", "apparmor")) {
+        load_security_tests_apparmor;
+    }
+    elsif (check_var("SECURITY", "openscap")) {
+        load_security_tests_openscap;
     }
 }
 elsif (get_var('SMT')) {
@@ -1022,6 +1075,12 @@ else {
         }
         return 1;
     }
+    elsif (get_var('TEUTHOLOGY')) {
+        boot_hdd_image;
+        loadtest 'console/teuthology';
+        loadtest 'console/pulpito';
+        return 1;
+    }
     elsif (get_var('UPGRADE_ON_ZVM')) {
         # Set 'DESKTOP' for origin system to avoid SLE15 s390x bug: bsc#1058071 - No VNC server available in SUT
         # Set origin and target version
@@ -1078,7 +1137,7 @@ else {
             if (get_var("ADDONS")) {
                 loadtest "installation/addon_products_yast2";
             }
-            if (get_var('SCC_ADDONS')) {
+            if (get_var('SCC_ADDONS') && !get_var('SLENKINS_NODE')) {
                 loadtest "installation/addon_products_via_SCC_yast2";
             }
             if (get_var("ISCSI_SERVER")) {

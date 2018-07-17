@@ -22,6 +22,8 @@ sub run {
     my $enable_command_logging = 'export PROMPT_COMMAND=\'logger -t openQA_CMD "$(history 1 | sed "s/^[ ]*[0-9]\+[ ]*//")"\'';
     assert_script_run("echo \"$enable_command_logging\" >> /root/.bashrc");
     assert_script_run($enable_command_logging);
+    systemctl("stop " . opensusebasetest::firewall);
+    systemctl("disable " . opensusebasetest::firewall);
     record_info('INFO', 'Checking that network is up');
     systemctl('is-active network');
     systemctl('is-active wicked');
@@ -34,6 +36,10 @@ sub run {
     assert_script_run('mkdir -p /data/{static_address,dynamic_address}');
     #download script for check interface status
     $self->get_from_data('wicked/check_interfaces.sh', '/data/check_interfaces.sh', executable => 1) if check_var('WICKED', 'basic');
+    if (check_var('WICKED', 'advanced')) {
+        $self->setup_static_network($self->get_ip(is_wicked_ref => check_var('IS_WICKED_REF', 1), type => 'host'));
+    }
+    $self->get_from_data('wicked/ifbind.sh', '/bin/ifbind.sh', executable => 1);
 }
 
 sub test_flags {
@@ -41,3 +47,4 @@ sub test_flags {
 }
 
 1;
+

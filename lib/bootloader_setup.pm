@@ -643,7 +643,7 @@ sub specific_caasp_params {
         # Wait until admin node genarates autoyast profile
         pause_until 'VELUM_CONFIGURED' if get_var('AUTOYAST');
         # Wait until first round of nodes are processed
-        pause_until 'NODES_ACCEPTED' if get_var('DELAYED_WORKER');
+        pause_until 'NODES_ACCEPTED' if get_var('DELAYED');
     }
 }
 
@@ -742,5 +742,3 @@ sub ensure_shim_import {
 }
 
 1;
-
-# vim: sw=4 et

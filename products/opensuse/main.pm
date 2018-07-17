@@ -313,6 +313,10 @@ sub load_default_tests {
 }
 
 # load the tests in the right order
+if (is_jeos) {
+    load_jeos_tests();
+}
+
 if (is_kernel_test()) {
     load_kernel_tests();
 }
@@ -407,8 +411,11 @@ elsif (get_var('SECURITYTEST')) {
     elsif (check_var('SECURITYTEST', 'crypt')) {
         load_security_tests_crypt;
     }
-    elsif (check_var("SECURITYTEST", "apparmor_status")) {
-        load_security_tests_apparmor_status;
+    elsif (check_var("SECURITYTEST", "apparmor")) {
+        load_security_tests_apparmor;
+    }
+    elsif (check_var("SECURITYTEST", "openscap")) {
+        load_security_tests_openscap;
     }
 }
 elsif (get_var('SYSTEMD_TESTSUITE')) {
@@ -462,7 +469,7 @@ else {
     elsif (is_jeos) {
         load_boot_tests();
         loadtest "jeos/firstrun";
-        loadtest "console/force_cron_run";
+        loadtest "console/force_scheduled_tasks";
         loadtest "jeos/diskusage";
         loadtest "jeos/root_fs_size";
         loadtest "jeos/mount_by_label";

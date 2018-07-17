@@ -67,7 +67,7 @@ our %SLE15_DEFAULT_MODULES = (
     sles4sap => 'base,desktop,serverapp,ha,sapapp',
 );
 
-our @SLE15_ADDONS_WITHOUT_LICENSE = qw(ha sdk wsm we);
+our @SLE15_ADDONS_WITHOUT_LICENSE = qw(ha sdk wsm we hpcm);
 
 # Method to determine if a short name references a module based on what's defined
 # on %SLE15_MODULES
@@ -84,7 +84,7 @@ sub accept_addons_license {
     #   isc co SUSE:SLE-15:GA 000product
     #   grep -l EULA SUSE:SLE-15:GA/000product/*.product | sed 's/.product//'
     # All shown products have a license that should be checked.
-    my @addons_with_license = qw(geo live rt idu ids lgm hpcm ses);
+    my @addons_with_license = qw(geo live rt idu ids lgm ses);
 
     # In SLE 15 some modules do not have license or have the same
     # license (see bsc#1089163) and so are not be shown twice
@@ -160,7 +160,7 @@ sub register_addons {
                 send_key_until_needlematch "scc-code-field-$addon", 'tab';
             }
             else {
-                assert_and_click "scc-code-field-$addon", 'left', 60;
+                assert_and_click "scc-code-field-$addon", 'left', 120;
             }
             type_string $regcode;
             save_screenshot;
@@ -367,7 +367,7 @@ sub fill_in_registration_data {
                     qw(import-untrusted-gpg-key yast_scc-pkgtoinstall yast-scc-emptypkg inst-addon contacting-registration-server refreshing-repository)];
                 if (match_has_tag('import-untrusted-gpg-key')) {
                     if (!check_screen(\@known_untrusted_keys, 0)) {
-                        record_soft_failure 'untrusted gpg key';
+                        die 'untrusted gpg key';
                     }
                     wait_screen_change {
                         send_key 'alt-t';
@@ -648,4 +648,3 @@ sub install_docker_when_needed {
 }
 
 1;
-# vim: sw=4 et
