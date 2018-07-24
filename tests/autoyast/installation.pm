@@ -17,7 +17,7 @@
 # Maintainer: Vladimir Nadvornik <nadvornik@suse.cz>
 
 use strict;
-use base "opensusebasetest";
+use base 'y2logsstep';
 use testapi;
 use utils;
 use version_utils 'is_caasp';
@@ -47,15 +47,11 @@ sub save_and_upload_stage_logs {
     upload_logs "/tmp/logs-stage1-error$i.tar.bz2";
 }
 
-sub save_and_upload_yastlogs {
-    my ($self, $suffix) = @_;
-    my $name = $stage . ($suffix // '');
-    # save logs and continue
+sub upload_autoyast_profile {
+    my ($self) = @_;
     select_console 'install-shell';
-
     # the network may be down with keep_install_network=false
     # use static ip in that case if not on s390x
-    assert_script_run "save_y2logs /tmp/y2logs-$name.tar.bz2";
     if (!check_var("BACKEND", "s390x")) {
         type_string " if ! ping -c 1 10.0.2.2 ; then
             ip addr add 10.0.2.200/24 dev eth0
@@ -72,10 +68,6 @@ sub save_and_upload_yastlogs {
     if (script_run '! test -e /tmp/profile/modified.xml') {
         upload_logs '/tmp/profile/modified.xml';
     }
-
-    upload_logs "/tmp/y2logs-$name.tar.bz2";
-    $self->save_and_upload_log('btrfs filesystem usage /mnt', 'btrfs-filesystem-usage-mnt.txt');
-    $self->save_and_upload_log('df',                          'df.txt');
     save_screenshot;
     clear_console;
     select_console 'installation';
@@ -86,7 +78,7 @@ sub handle_expected_errors {
     my $i = $args{iteration};
     record_info('Expected error', 'Iteration = ' . $i);
     send_key "alt-s";    #stop
-    $self->save_and_upload_yastlogs("_expected_error$i");
+    $self->save_upload_y2logs("-$stage-expected_error$i");
     $i++;
     wait_screen_change { send_key 'tab' };    #continue
     wait_screen_change { send_key 'ret' };
@@ -161,7 +153,7 @@ sub run {
 
     mouse_hide(1);
     check_screen \@needles, $check_time;
-    until (  match_has_tag('reboot-after-installation')
+    until (match_has_tag('reboot-after-installation')
           || match_has_tag('bios-boot')
           || match_has_tag('autoyast-stage1-reboot-upcoming')
           || match_has_tag('linux-login-casp'))
@@ -183,7 +175,7 @@ sub run {
             if (check_var('DISTRI', 'sle') && check_screen('warning-partition-reduced', 0)) {
                 # See poo#19978, no timeout on partition warning, hence need to click OK button to soft-fail
                 record_info('bsc#1045470',
-                        "There is no timeout on sle for reduced partition screen by default.\n"
+                    "There is no timeout on sle for reduced partition screen by default.\n"
                       . "But there is timeout on CaaSP and if explicitly defined in profile. See bsc#1045470 for details.");
                 send_key_until_needlematch 'create-partition-plans-finished', $cmd{ok};
                 next;
@@ -293,7 +285,8 @@ sub test_flags {
 
 sub post_fail_hook {
     my ($self) = shift;
-    $self->save_and_upload_yastlogs;
+    $self->upload_autoyast_profile;
+    $self->SUPER::post_fail_hook;
 }
 
 1;

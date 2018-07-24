@@ -199,7 +199,7 @@ sub logcurrentenv {
 
 sub have_addn_repos {
     return
-         !get_var("NET")
+      !get_var("NET")
       && !get_var("EVERGREEN")
       && get_var("SUSEMIRROR")
       && !get_var("FLAVOR", '') =~ m/^Staging2?[\-]DVD$/;
@@ -218,7 +218,7 @@ sub packagekit_available {
 }
 
 sub is_kernel_test {
-    return ( get_var('INSTALL_LTP')
+    return (get_var('INSTALL_LTP')
           || get_var('LTP_COMMAND_FILE')
           || get_var('QA_TEST_KLP_REPO')
           || get_var('INSTALL_KOTD')
@@ -302,7 +302,7 @@ sub is_desktop_module_selected {
     # productivity and ha require desktop applications, so it's preselected
     # same is true for sles4sap
     return
-         get_var('ADDONS', '') =~ /all-packages|desktop|we/
+      get_var('ADDONS', '') =~ /all-packages|desktop|we/
       || get_var('WORKAROUND_MODULES', '') =~ /desktop|we/
       || get_var('ADDONURL',           '') =~ /desktop|we/
       || get_var('SCC_ADDONS',         '') =~ /desktop|we|productivity|ha/
@@ -369,6 +369,9 @@ sub load_boot_tests {
     elsif (get_var("PXEBOOT")) {
         set_var("DELAYED_START", "1");
         loadtest "autoyast/pxe_boot";
+    }
+    elsif (check_var('BACKEND', 'spvm')) {
+        loadtest "installation/bootloader_spvm";
     }
     else {
         loadtest "installation/bootloader" unless load_bootloader_s390x();
@@ -499,12 +502,13 @@ sub load_slepos_tests {
 sub load_docker_tests {
     loadtest "console/docker";
     loadtest "console/docker_runc";
-    # No package 'docker-compose' in SLE
-    if (!is_sle) {
-        loadtest "console/docker_compose";
-    }
-    if (is_sle('<12-SP4')) {
+    if (is_sle('12-SP3+')) {
+        loadtest "console/docker_image";
         loadtest "console/sle2docker";
+    }
+    elsif (is_opensuse) {
+        loadtest "console/docker_image_rpm";
+        loadtest "console/docker_compose";
     }
 }
 
@@ -513,7 +517,7 @@ sub load_system_role_tests {
         loadtest "installation/setup_online_repos";
     }
     # Do not run on REMOTE_CONTROLLER, IPMI and on Hyper-V in GUI mode
-    if (!get_var("REMOTE_CONTROLLER") && !check_var('BACKEND', 'ipmi') && !is_hyperv_in_gui && !get_var("LIVECD")) {
+    if (!get_var("REMOTE_CONTROLLER") && !check_var('BACKEND', 'ipmi') && !is_hyperv_in_gui && !get_var("LIVECD") && !check_var('BACKEND', 'spvm')) {
         loadtest "installation/logpackages";
     }
     loadtest "installation/disable_online_repos" if get_var('DISABLE_ONLINE_REPOS') && !get_var('OFFLINE_SUT');
@@ -587,7 +591,7 @@ sub ssh_key_import {
 
 sub we_is_applicable {
     return
-         is_server()
+      is_server()
       && (get_var("ADDONS", "") =~ /we/ or get_var("SCC_ADDONS", "") =~ /we/ or get_var("ADDONURL", "") =~ /we/)
       && get_var('MIGRATION_REMOVE_ADDONS', '') !~ /we/;
 }
@@ -808,7 +812,7 @@ sub load_inst_tests {
         #no matter with or without INSTALL_TO_OTHERS tag
         if (
             is_sle
-            && (   check_var('ARCH', 'x86_64')
+            && (check_var('ARCH', 'x86_64')
                 && sle_version_at_least('12-SP2')
                 && is_server()
                 && (!is_sles4sap() || is_sles4sap_standard())
@@ -891,12 +895,13 @@ sub load_inst_tests {
         # the test should run only in scenarios, where installed
         # system is not being tested (e.g. INSTALLONLY etc.)
         # The test also won't work reliably when network is bridged (non-s390x svirt).
-        if (    !consolestep_is_applicable()
+        if (!consolestep_is_applicable()
             and !get_var("REMOTE_CONTROLLER")
             and !is_hyperv_in_gui
             and !is_bridged_networking
             and !check_var('BACKEND', 's390x')
             and !check_var('BACKEND', 'ipmi')
+            and !check_var('BACKEND', 'spvm')
             and is_sle('12-SP2+'))
         {
             loadtest "installation/hostname_inst";
@@ -1085,7 +1090,7 @@ sub load_consoletests {
     if (!is_staging && (is_opensuse || (check_var_array('SCC_ADDONS', 'asmm') || (sle_version_at_least('15') && !is_desktop)))) {
         loadtest "console/salt";
     }
-    if (   check_var('ARCH', 'x86_64')
+    if (check_var('ARCH', 'x86_64')
         || check_var('ARCH', 'i686')
         || check_var('ARCH', 'i586'))
     {
@@ -1130,9 +1135,9 @@ sub load_consoletests {
     }
     loadtest "console/mtab";
     if (!get_var("NOINSTALL") && !get_var("LIVETEST") && (check_var("DESKTOP", "textmode"))) {
+        loadtest "console/mysql_srv";
         # disable these tests of server packages for SLED (poo#36436)
         load_console_server_tests() unless is_desktop;
-        loadtest "console/mysql_srv";
     }
     if (check_var("DESKTOP", "xfce")) {
         loadtest "console/xfce_gnome_deps";
@@ -1775,9 +1780,16 @@ sub load_security_tests_apparmor {
 }
 
 sub load_security_tests_openscap {
+    # ALWAYS run following tests in sequence because of the dependencies
+
+    # Setup - download test files and install necessary packages
+    loadtest "security/openscap/oscap_setup";
+
     loadtest "security/openscap/oscap_info";
     loadtest "security/openscap/oscap_oval_scanning";
     loadtest "security/openscap/oscap_xccdf_scanning";
+    loadtest "security/openscap/oscap_source_datastream";
+    loadtest "security/openscap/oscap_result_datastream";
 }
 
 sub load_systemd_patches_tests {

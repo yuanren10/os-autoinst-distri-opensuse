@@ -150,6 +150,18 @@ are present and in working condition. Just Hyper-V for now.
 =cut
 sub integration_services_check {
     if (check_var('VIRSH_VMM_FAMILY', 'hyperv')) {
+        # Host-side of Integration Services
+        my $vmname       = console('svirt')->name;
+        my $ips_host_pov = console('svirt')
+          ->get_cmd_output('powershell -Command "Get-VM ' . $vmname . ' | Get-VMNetworkAdapter | Format-Table -HideTableHeaders IPAddresses"');
+        $ips_host_pov = (split /\n/, $ips_host_pov)[1];
+        $ips_host_pov =~ s/,.*//g;
+        $ips_host_pov =~ s/\{//g;
+        my $ips_guest_pov = script_output("ip address show up scope global | grep -w inet | awk '{ print \$2 }' | sed 's|/.*||' | tr -d '\\n'");
+        record_info('IP (host)',  $ips_host_pov);
+        record_info('IP (guest)', $ips_guest_pov);
+        die "ips_host_pov=<$ips_host_pov> ips_guest_pov=<$ips_guest_pov>" if $ips_host_pov ne $ips_guest_pov;
+        # Guest-side of Integration Services
         assert_script_run('rpmquery hyper-v');
         assert_script_run('rpmverify hyper-v');
         my $base = is_jeos() ? '-base' : '';
@@ -240,7 +252,7 @@ sub clear_console {
 # in some backends we need to prepare the reboot/shutdown
 sub prepare_system_shutdown {
     # kill the ssh connection before triggering reboot
-    console('root-ssh')->kill_ssh if check_var('BACKEND', 'ipmi');
+    console('root-ssh')->kill_ssh if check_var('BACKEND', 'ipmi') || check_var('BACKEND', 'spvm');
 
     if (check_var('ARCH', 's390x')) {
         if (check_var('BACKEND', 's390x')) {
@@ -281,6 +293,7 @@ sub assert_gui_app {
 # console font, we need to call systemd-vconsole-setup to workaround
 # that
 sub check_console_font {
+    return if check_var('BACKEND', 'spvm');
     # we do not await the console here, as we have to expect the font to be broken
     # for the needle to match
     select_console('root-console', await_console => 0);
@@ -792,7 +805,7 @@ sub power_action {
     }
     # no need to redefine the system when we boot from an existing qcow image
     # Do not redefine if autoyast, as did initial reboot already
-    if (   check_var('VIRSH_VMM_FAMILY', 'kvm')
+    if (check_var('VIRSH_VMM_FAMILY', 'kvm')
         || check_var('VIRSH_VMM_FAMILY', 'xen')
         || (get_var('S390_ZKVM') && !get_var('BOOT_HDD_IMAGE') && !get_var('AUTOYAST')))
     {
@@ -1151,6 +1164,7 @@ sub ensure_serialdev_permissions {
     }
     else {
         assert_script_run "chown $testapi::username /dev/$testapi::serialdev && gpasswd -a $testapi::username \$(stat -c %G /dev/$testapi::serialdev)";
+        assert_script_run "gpasswd -a $testapi::username dialout";
     }
 }
 

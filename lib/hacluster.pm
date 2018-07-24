@@ -17,6 +17,7 @@ use version_utils 'is_sle';
 use utils;
 use testapi;
 use lockapi;
+use isotovideo;
 
 our @EXPORT = qw(
   $crm_mon_cmd
@@ -119,7 +120,9 @@ sub ensure_process_running {
     my $process   = shift;
     my $timeout   = 30;
     my $starttime = time;
-    while (script_run "ps -A | grep -q '\\<$process\\>'") {
+    my $ret       = undef;
+
+    while ($ret = script_run "ps -A | grep -q '\\<$process\\>'") {
         my $timerun = time - $starttime;
         if ($timerun < $timeout) {
             sleep 5;
@@ -129,14 +132,17 @@ sub ensure_process_running {
         }
     }
 
-    return 0;
+    # script_run need to be defined to ensure a correct exit code
+    return defined $ret;
 }
 
 sub ensure_resource_running {
     my ($rsc, $regex) = @_;
     my $timeout   = 30;
     my $starttime = time;
-    while (script_run "crm resource status $rsc | grep -E -q '$regex'") {
+    my $ret       = undef;
+
+    while ($ret = script_run "crm resource status $rsc | grep -E -q '$regex'") {
         my $timerun = time - $starttime;
         if ($timerun < $timeout) {
             sleep 5;
@@ -146,14 +152,13 @@ sub ensure_resource_running {
         }
     }
 
-    return 0;
+    # script_run need to be defined to ensure a correct exit code
+    return defined $ret;
 }
 
 sub ensure_dlm_running {
     die 'dlm is not running' unless check_rsc "dlm";
-    ensure_process_running 'dlm_controld';
-
-    return 0;
+    return ensure_process_running 'dlm_controld';
 }
 
 sub write_tag {
@@ -306,8 +311,14 @@ sub get_lun {
 
 sub pre_run_hook {
     my ($self) = @_;
-
-    $prev_console = $testapi::selected_console;
+    if (isotovideo::get_version() == 12) {
+        $prev_console = $autotest::selected_console;
+    } else {
+        # perl -c will give a "only used once" message
+        # here and this makes the travis ci tests fail.
+        1 if defined $testapi::selected_console;
+        $prev_console = $testapi::selected_console;
+    }
 }
 
 sub post_run_hook {

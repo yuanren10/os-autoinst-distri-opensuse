@@ -283,6 +283,8 @@ if (sle_version_at_least('15') && !check_var('SCC_REGISTER', 'installation')) {
               = is_module($short_name) ?
               "REPO_SLE${version}_MODULE_${repo_name}"
               : "REPO_SLE${version}_PRODUCT_${repo_name}";
+            # Replace dashes with underscore symbols, as not used in the variable name
+            $repo_variable_name =~ s/-/_/;
             my $default_repo_name
               = is_module($short_name) ?
               "$prefix-Module-$full_name-POOL-$arch-Build$build-Media1"
@@ -382,8 +384,9 @@ if (get_var('SUPPORT_SERVER_ROLES', '') =~ /aytest/ && !get_var('AYTESTS_REPO'))
     }
 }
 
-# Workaround to be able to use create_hdd_hpc_textmode simultaneously  in SLE15 and SLE12 SP*
-if (check_var('SLE_PRODUCT', 'hpc') && check_var('INSTALLONLY', '1') && is_sle('<15')) {
+# Workaround to be able to use create_hdd_hpc_textmode simultaneously in SLE15 and SLE12 SP*
+# and exlude maintenance tests
+if (check_var('SLE_PRODUCT', 'hpc') && check_var('INSTALLONLY', '1') && is_sle('<15') && !is_updates_tests) {
     set_var('SCC_ADDONS',   'hpcm,wsm');
     set_var('SCC_REGISTER', 'installation');
 }
