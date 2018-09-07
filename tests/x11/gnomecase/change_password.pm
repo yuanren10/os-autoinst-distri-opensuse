@@ -16,7 +16,7 @@ use strict;
 use testapi;
 use utils;
 use power_action_utils 'reboot_x11';
-use version_utils;
+use version_utils qw(is_opensuse is_sle);
 
 #testcase 5255-1503803: Gnome:Change Password
 
@@ -52,7 +52,8 @@ sub reboot_system {
     assert_screen "displaymanager", 200;
     $self->{await_reboot} = 0;
     # The keyboard focus is different between SLE15 and SLE12
-    send_key 'up' if sle_version_at_least('15');
+    send_key 'up' if is_sle('15+');
+    send_key 'tab' if is_opensuse;
     send_key "ret";
     wait_still_screen;
     type_string "$newpwd\n";
@@ -103,30 +104,51 @@ sub add_user {
 
 sub run {
     my ($self) = @_;
+    my $ov = get_var('NOAUTOLOGIN');
 
     #change pwd for current user and add new user for switch scenario
     assert_screen "generic-desktop";
     $self->unlock_user_settings;
     change_pwd;
+    if (check_screen('Automatic_Login_Opened', 0)) {
+        send_key "alt-u";
+        set_var('NOAUTOLOGIN', 1);
+    }
     add_user;
 
     #verify changed password work well in the following scenario:
     lock_screen;
     logout_and_login;
     $self->reboot_system;
+    set_var('NOAUTOLOGIN', $ov);
 
     #swtich to new added user then switch back
     switch_user;
     send_key "esc";
     assert_and_click 'displaymanager-test';
+    if (check_screen('gdm-authentication-error', 0)) {
+            record_soft_failure 'bsc#1104305 - User login prompt error after switch user';
+            assert_and_click 'displaymanager-test';
+    }
     assert_screen "testUser-login-dm";
     type_string "$pwd4newUser\n";
     assert_screen "generic-desktop", 120;
     switch_user;
     send_key "esc";
     assert_and_click "displaymanager-$username";
+    if (check_screen('gdm-authentication-error', 0)) {
+            record_soft_failure 'bsc#1104305 - User login prompt error after switch user';
+            assert_and_click "displaymanager-$username";
+    }
     assert_screen "originUser-login-dm";
     type_string "$newpwd\n";
+    if (check_screen('displaymanager', 6)) {
+        record_soft_failure 'bsc#1104322 - Password accept but login failed';
+        send_key "ctrl-alt-f2";
+        send_key 'spc';
+        wait_still_screen 5;
+        type_string "$newpwd\n";
+    }
     assert_screen "generic-desktop", 120;
 
     #restore password to original value
